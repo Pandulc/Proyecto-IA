@@ -1,0 +1,26 @@
+{
+  "Pagos": {
+    "topicId": 11,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  },
+  "Acceso": {
+    "topicId": 12,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  },
+  "Catalogo": {
+    "topicId": 13,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  },
+  "Logistica": {
+    "topicId": 14,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  },
+  "Infra": {
+    "topicId": 15,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  },
+  "Soporte": {
+    "topicId": 16,
+    "chat_webhook": "REPLACE_WITH_GOOGLE_CHAT_WEBHOOK_URL"
+  }
+}
