@@ -267,7 +267,7 @@
             },
             {
               "name": "X-API-Key",
-              "value": "379147CA7E3AC93CF0C98BC8AFBC0890"
+              "value": "YOUR_OSTICKET_API_KEY"
             }
           ]
         },
