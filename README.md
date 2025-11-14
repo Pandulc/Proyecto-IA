@@ -22,27 +22,30 @@ Plataforma inteligente que procesa pedidos de soporte de clientes recibidos vía
 ```mermaid
 graph TD
     subgraph Ingesta
-    A[Webhook GChat] --> B(Parse & Dedup)
+    A[Webhook GChat] --> B("Parse & Dedup")
     end
-
+    
     subgraph Inteligencia
-    B --> C[Groq: Topic Label]
-    C --> D{Solución Conocida?}
-    D -->|Si - RAG| E[Responder GChat (Deflexión)]
-    D -->|No| F[Groq: Prioridad MoSCoW]
+    B --> C["Groq: Topic Label"]
+    C --> D{"Solución Conocida?"}
+    D -->|Si - RAG| E["Responder GChat (Deflexión)"]
+    D -->|No| F["Groq: Prioridad MoSCoW"]
     end
-
+    
     subgraph Acción
-    F --> G[Area & Routing Map]
-    G --> H{Prioridad?}
-    H -->|MUST/SHOULD| I[osTicket: Create Ticket]
-    H -->|COULD/WONT| J[Groq: Generar Respuesta Social]
+    F --> G["Area & Routing Map"]
+    G --> H{"Prioridad?"}
+    H -->|MUST/SHOULD| I["osTicket: Create Ticket"]
+    H -->|COULD/WONT| J["Groq: Generar Respuesta Social"]
     end
-
+    
     subgraph Feedback
-    I --> K[Notificar GChat + Link Ticket]
-    J --> L[Responder GChat]
+    I --> K["Notificar GChat + Link Ticket"]
+    J --> L["Responder GChat"]
     end
+    
+    style E fill:#001885,stroke:#333,stroke-width:2px
+    style I fill:#540085,stroke:#333,stroke-width:2px
 ```
 
 ## 📂 Estructura del Repositorio
