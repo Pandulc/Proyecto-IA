@@ -1,121 +1,138 @@
-# Voice-of-Customer Miner
+# Voice-of-Customer Miner (VoC Miner)
 
-Plataforma que procesa pedidos de soporte de clientes recibidos vía Google Chat, los normaliza, agrupa por temas recurrentes, calcula su severidad con el método MoSCoW y genera tickets priorizados en osTicket.
+![n8n](https://img.shields.io/badge/n8n-workflow-orange?style=flat-square&logo=n8n)
+![Docker](https://img.shields.io/badge/Docker-Compose-blue?style=flat-square&logo=docker)
+![Postgres](https://img.shields.io/badge/Postgres-DB-336791?style=flat-square&logo=postgresql)
+![Groq](https://img.shields.io/badge/AI-Llama3-purple?style=flat-square)
+![osTicket](https://img.shields.io/badge/Support-osTicket-green?style=flat-square)
 
-## Estructura del repositorio
+Plataforma inteligente que procesa pedidos de soporte de clientes recibidos vía Google Chat. Normaliza los mensajes, los agrupa por temas, calcula su severidad con el método MoSCoW, aplica estrategias de deflexión automática (RAG) y genera tickets priorizados en osTicket.
+
+## 🚀 Características Principales
+
+- **Ingesta & Normalización:** Sanitización de mensajes de Google Chat y deduplicación inteligente basada en hash.
+- **Clasificación IA:** Etiquetado automático de tópicos y cálculo de prioridad (MoSCoW) utilizando Llama 3 vía Groq.
+- **Deflexión Inteligente (RAG):** Consulta una base de conocimientos local antes de crear un ticket.
+- **Ruteo Dinámico:** Asignación automática de áreas (Pagos, Infra, Acceso, etc.) basada en el tópico detectado.
+- **Aprendizaje Continuo:** El Harvester monitorea tickets cerrados y aprende soluciones para futuros casos.
+- **Full Stack Local:** Infraestructura completamente contenerizada en Docker Compose.
+
+## 📊 Flujo de Arquitectura
+
+```mermaid
+graph TD
+    subgraph Ingesta
+    A[Webhook GChat] --> B(Parse & Dedup)
+    end
+
+    subgraph Inteligencia
+    B --> C[Groq: Topic Label]
+    C --> D{Solución Conocida?}
+    D -->|Si - RAG| E[Responder GChat (Deflexión)]
+    D -->|No| F[Groq: Prioridad MoSCoW]
+    end
+
+    subgraph Acción
+    F --> G[Area & Routing Map]
+    G --> H{Prioridad?}
+    H -->|MUST/SHOULD| I[osTicket: Create Ticket]
+    H -->|COULD/WONT| J[Groq: Generar Respuesta Social]
+    end
+
+    subgraph Feedback
+    I --> K[Notificar GChat + Link Ticket]
+    J --> L[Responder GChat]
+    end
+```
+
+## 📂 Estructura del Repositorio
 
 ```
-infrastructure/          stack docker-compose (n8n, Postgres, osTicket + MariaDB)
-config/                  plantillas en tiempo de ejecución (mapa de áreas, ejemplos de env)
-flows/                   export de n8n — importar VoC_Miner.json en n8n
-database/                assets SQL (esquema de tópicos y mensajes)
-scripts/                 scripts auxiliares para modelos y bootstrap de la DB
-samples/                 cargas sintéticas para test local (p.ej. webhook de Google Chat)
+├── infrastructure/      # Stack docker-compose (n8n, Postgres, osTicket + MariaDB)
+├── config/              # Archivos de configuración y plantillas de entorno
+├── flows/               # Workflows JSON de n8n (Miner y Harvester)
+├── database/            # Scripts SQL (esquema, seeds)
+├── scripts/             # Scripts auxiliares (tests, bootstrap)
+└── samples/             # Cargas sintéticas para testing
 ```
 
-## Arquitectura y flujo
+## ⚙️ Configuración
 
-### Flujo Principal (VoC_Miner.json)
+### Variables de Entorno
 
-1. **Ingesta (Google Chat).** El flujo expone un endpoint `Webhook /gchat` en n8n para recibir mensajes desde Google Chat y normaliza el payload (`Parse Google Chat`).
-2. **Normalización y deduplicado.** `Dedup & Clean` pasa todo a minúsculas, limpia URLs y calcula un hash FNV a partir de `{day|channel|user|text}` para descartar duplicados estrictos.
-3. **Etiquetado de tópicos.** `Groq: Topic Label` envía el texto sanitizado a `llama-3.1-8b-instant` (Groq) y devuelve un label/resumen corto.
-4. **Persistencia.** `DB: Insert Message` guarda el mensaje con su tópico y prioridad en Postgres (`voc_messages`). El esquema incluye campos para `priority`, `score`, `osticket_id`, `solution` y `solution_at`.
-5. **Verificación de soluciones conocidas.** `DB: Get Solutions + Groq: Deflector de Tickets & Priorizador (MoSCoW)` consulta si existe una solución previa para el mismo tópico y problema similar. Si se encuentra, responde directamente al usuario vía Google Chat (deflección).
-6. **Prioridad MoSCoW.** `Groq: Deflector de Tickets & Priorizador (MoSCoW)` procesa el contexto con información histórica y devuelve una prioridad (`MUST/SHOULD/COULD/WONT`) y un puntaje 0‑100.
-7. **Ruteo y tickets.** `Area & Routing Map` enriquece el evento usando `config/areas_mapping.template.json`. Los niveles `MUST` y `SHOULD` sin solución conocida crean tickets en osTicket mediante `Format to osTicket` + `osTicket: Create ticket`. Los restantes se notifican vía Google Chat.
-8. **Actualización de tópicos.** `DB: Upsert Topic` registra o actualiza el tópico en `voc_topics` con su label, prioridad y timestamp.
+Crear `.env` basado en `config/env/local.example`:
 
-### Flujo de Recolección (VoC_Solution_Harvester.json)
+| Variable | Descripción |
+|---------|-------------|
+| `N8N_ENCRYPTION_KEY` | Clave de cifrado para n8n |
+| `GROQ_API_KEY` | API Key para Llama 3 |
+| `POSTGRES_USER/PASS` | Credenciales Postgres |
+| `OSTICKET_DB_*` | Credenciales DB osTicket |
+| `N8N_WEBHOOK_URL` | URL pública para recibir mensajes |
 
-1. **Trigger programado.** Se ejecuta cada 1 hora para recolectar soluciones de tickets cerrados.
-2. **Consulta de tickets.** `MySQL: Get Recent Closed Tickets` lee tickets cerrados en osTicket en el intervalo.
-3. **Extracción de respuestas.** `MySQL: Get Last Agent Reply` obtiene la última respuesta del agente de soporte.
-4. **Resumen con LLM.** `Groq: Summarize Solution` estandariza el texto de la solución.
-5. **Persistencia de soluciones.** `Postgres: Update Solution` asocia la solución al mensaje original mediante `osticket_id` y registra `solution_at`.
+### Mapeo de Áreas
 
-## MVP (Entrega 1)
+Editar el nodo **Area & Routing Map** dentro de n8n para asignar Help Topics de osTicket.
 
-- **Objetivo:** convertir mensajes entrantes de Google Chat en temas accionables → backlog limpio.
-- **Pipeline:** ingesta (webhook Google Chat simulado) → normalización → etiquetado → prioridad MoSCoW → creación de tickets (solo MUST/SHOULD) en osTicket.
-- **Plantilla de backlog:** `[MUST] Error de login desde móvil` + resumen + 3 ejemplos + metadata (`topic_id`, label, priority, sample_ids).
 
-## Entrega 2: Mejoras Implementadas
 
-### 1. Poblado de la Base de Datos
+## 🛠️ Puesta en Marcha
 
-Se realizó un poblado inicial de la base de datos con soluciones históricas a problemas frecuentes y no tan frecuentes, clasificados por prioridad (MUST/SHOULD/COULD/WONT). Esta base de conocimiento permite:
+### 1. Infraestructura
 
-- Mejorar la priorización de nuevos problemas mediante comparación con casos históricos
-- Habilitar respuestas directas cuando existe una solución conocida
-- Reducir la carga de tickets mediante deflección inteligente
+```bash
+cd infrastructure
+docker compose --env-file ../config/env/local.example up -d
+```
 
-El script `voc_init_db.sh` ahora ejecuta automáticamente el poblado mediante `002_seed_data.sql`.
+### 2. Base de Datos
 
-### 2. Optimización del Flujo Principal
+```bash
+cd ../database
+../scripts/voc_init_db.sh
+```
 
-Comparado con MVP1, el flujo final (`VoC_Miner.json`) presenta mejoras significativas:
+### 3. Configuración osTicket
 
-**Eliminaciones:**
+1. Entrar a: `http://localhost:8080/scp`
+2. Crear Help Topics y Teams
+3. Generar API Key y registrarla en n8n
 
-- Nodos puramente de flujo (`Original (passthrough)`, múltiples `Merge` intermedios)
-- Consulta `DB: Get Volume 7d` (ahora integrado en el prompt de priorización)
-- Nodos redundantes de ruteo (`Merge: to osTicket`, `Merge: to GChat`)
+### 4. Configuración n8n
 
-**Mejoras en prompts:**
+1. Entrar a: `http://localhost:5678`
+2. Importar (versiones finales: final/flows):
+   - `VoC_Miner.json` 
+   - `VoC_Solution_Harvester.json`
+3. Configurar credenciales (Postgres, MariaDB, Groq)
+4. Activar flujos
 
-- Priorización más precisa con contexto histórico embebido
-- Topic labeling optimizado para consistencia
-- Instrucciones más específicas para deflección de tickets
+### 5. Prueba
 
-**Nueva esquematización:**
+- Modo Sintético (Local): Utiliza el script para simular un mensaje JSON sin salir de tu red.
+```bash
+./scripts/test_gchat_webhook.sh "Hola, no puedo loguearme en la app"
+```
+- Modo Real (Google Chat + Ngrok): Para interactuar con el bot desde la interfaz real de Google Chat (como se realizó en las pruebas):
 
-- Flujo lineal simplificado: `Webhook → Parse → Dedup → Topic → Insert → Check Solution → Route`
-- Decisión temprana de deflección antes de crear ticket
-- Ruteo directo basado en prioridad sin nodos intermedios
+    1. Crea un proyecto en Google Cloud Console.
 
-### 3. Respuesta Directa (Deflección de Tickets)
+    2. Habilita la Google Chat API.
 
-Se implementó un mecanismo de deflección que:
+    3. En la configuración de la API ("Manage" > "Configuration"), define:
 
-- Consulta la base de datos de soluciones (`voc_messages.solution`) antes de crear un ticket
-- Busca problemas similares mediante coincidencia de tópico y contexto
-- Si existe una solución registrada, responde directamente al usuario vía Google Chat
-- Solo crea ticket en osTicket cuando no hay solución conocida y la prioridad es MUST/SHOULD sin match
+        App URL: Tu endpoint de Ngrok (ej. https://<tu-id>.ngrok-free.app/webhook/gchat).
 
-Esto reduce significativamente el volumen de tickets duplicados y mejora el tiempo de respuesta.
+    4. Agrega el bot a un espacio en Google Chat y menciónalo (@VoCMiner ...). El mensaje viajará por Ngrok hasta n8n.
 
-### 4. Harvester de Soluciones
 
-Nuevo flujo automatizado (`VoC_Solution_Harvester.json`) que:
+## 🤖 Flujos Disponibles
 
-- Se ejecuta periódicamente (cada 1 hora) mediante Schedule Trigger
-- Lee tickets cerrados en osTicket (MariaDB) en el periodo
-- Extrae la última respuesta del agente usando consultas SQL
-- Resume la solución mediante Groq LLM para estandarizar el formato
-- Actualiza `voc_messages.solution` y `voc_messages.solution_at` en Postgres
-- Asocia la solución al mensaje original usando `osticket_id`
+### **1. VoC Miner (Principal)**
+Actúa como cerebro del sistema: clasificación, RAG, prioridad MoSCoW, creación de tickets y respuestas sociales.
 
-Este ciclo cerrado asegura que el conocimiento capturado en tickets se reutilice automáticamente.
+### **2. VoC Solution Harvester**
+Proceso automático que aprende soluciones de tickets cerrados y las incorpora a la base de conocimientos.
 
-## Puesta en marcha
+---
 
-1. **Variables:** copiá `config/env/local.example` a `.env` (o exportá variables) y cargá claves de Groq y credenciales de osTicket + Postgres.
-2. **Stack local:** desde `infrastructure/`, ejecutá `docker compose --env-file ../config/env/local.example up -d` (ajustá rutas según tu shell). Levanta n8n, Postgres y osTicket.
-3. **Base de datos VoC:** desde `database/`, ejecutá `../scripts/voc_init_db.sh` para crear las tablas `voc_messages` y `voc_topics` en Postgres y poblarlas con datos históricos de soluciones.
-4. **Configuración osTicket (manual):**
-   - Accedé a la interfaz web de osTicket (por defecto `http://localhost:8080`).
-   - Configurá los **Help Topics** correspondientes a cada área (Pagos, Acceso, Catálogo, Logística, Infra, Soporte) según `config/areas_mapping.template.json`.
-   - Creá los **Teams** necesarios para rutear los tickets a los equipos correctos.
-5. **n8n:** importá ambos flujos `flows/VoC_Miner.json` y `flows/VoC_Solution_Harvester.json`, actualizá credenciales (Groq API key, Postgres, osTicket/MySQL) y activá los workflows.
-6. **Google Chat:** generá un webhook entrante y apuntalo al endpoint público de n8n (`/webhook/gchat`). Probalo con `scripts/test_gchat_webhook.sh`.
-
-## Scripts útiles
-
-- `scripts/test_gchat_webhook.sh`: envía 4 payloads de prueba (MUST, SHOULD, COULD, WONT) al webhook de n8n para validar el flujo completo. Uso: `./scripts/test_gchat_webhook.sh [URL]` (default: `http://localhost:5678/webhook/gchat`).
-- `scripts/voc_init_db.sh`: crea tablas (`voc_schema.sql`) y carga datos históricos de soluciones (`002_seed_data.sql`) en Postgres.
-
-## Flujos disponibles
-
-- **`VoC_Miner.json`**: Flujo principal de ingesta, clasificación, deflección y creación de tickets.
-- **`VoC_Solution_Harvester.json`**: Flujo de recolección automática de soluciones desde tickets cerrados en osTicket.
