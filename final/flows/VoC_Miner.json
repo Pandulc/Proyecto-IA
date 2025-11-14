@@ -1,0 +1,909 @@
+{
+  "name": "VoC Miner Optimized",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gchat",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -3824,
+        528
+      ],
+      "id": "e8f8b8bb-b942-41bc-af7d-9ed18c6e3aaa",
+      "name": "Webhook /gchat",
+      "webhookId": "9fd87a03-7b68-47ae-a49e-c743b11d4bb6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Obtenemos el cuerpo crudo\nlet body = $json.body ?? $json;\n\n// [FIX] Postman: Si el body llega como String (texto plano), lo parseamos a JSON\nif (typeof body === 'string') {\n  try {\n    body = JSON.parse(body);\n  } catch (e) {\n    body = {};\n  }\n}\n\n// 2. Intentamos obtener el mensaje de la estructura REAL de Google Chat\nlet msg = body.chat?.messagePayload?.message;\nif (!msg) msg = body.message;\nmsg = msg || {};\n\n// 3. Extraemos y retornamos los datos normalizados\nreturn [{\n  json: {\n    id: msg.name ?? `${msg.thread?.name ?? ''}:${msg.createTime ?? new Date().toISOString()}`,\n    space: msg.space?.name ?? 'unknown',\n    text: String(msg.argumentText ?? msg.text ?? '').trim(),\n    user_email: (msg.sender?.email ?? '').toLowerCase(),\n    created_at: msg.createTime ?? new Date().toISOString(),\n    channel: 'google-chat',\n    thread: msg.thread?.name ?? null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3600,
+        528
+      ],
+      "id": "4fd8ae5c-77a4-40af-937e-7c5d2c1efa79",
+      "name": "Parse Google Chat"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "id": "8599e586-4fb5-4fe9-accf-afce686f6f2a"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -3376,
+        528
+      ],
+      "id": "e856e084-8845-4be7-b06e-a9da5f9170a7",
+      "name": "Has Text?"
+    },
+    {
+      "parameters": {
+        "jsCode": "function day(ts){ return (ts||'').slice(0,10); }\nconst it = items[0].json;\nfunction fnv1a(str){ let h=0x811c9dc5; for(let i=0;i<str.length;i++){ h^=str.charCodeAt(i); h += (h<<1)+(h<<4)+(h<<7)+(h<<8)+(h<<24); h>>>=0; } return ('00000000'+h.toString(16)).slice(-8); }\nconst clean = (s) => String(s||'').toLowerCase().replace(/https?:\\/\\/\\S+/gi,' ').replace(/\\s+/g,' ').trim();\n\nit.text_clean = clean(it.text);\nconst key = `${day(it.created_at)}|${it.space}|${it.user_email}|${it.text_clean}`;\nit._hash = fnv1a(key);\nreturn [{ json: it }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3168,
+        528
+      ],
+      "id": "c169f893-efa9-40dc-b597-3d55025ddb72",
+      "name": "Dedup & Clean"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + 'YOUR_GROQ_API_KEY_HERE' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.1-8b-instant\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un bot de soporte técnico encargado de la normalización de tickets. Tu objetivo es mantener la base de datos de tópicos limpia y consistente.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Analiza el mensaje y asigna el tópico más adecuado.\\n\\n**Reglas de Asignación:**\\n1. **REUTILIZACIÓN (Prioridad Alta):** Mira la lista de [Tópicos Existentes]. Si el mensaje refiere al MISMO problema que uno de la lista (aunque use palabras distintas), DEBES usar ese tópico exacto.\\n   - *Ejemplo:* Si existe \\\"problema mercado pago\\\" y el mensaje dice \\\"error en mercadopago\\\", usa \\\"problema mercado pago\\\".\\n2. **CREACIÓN:** Solo si el mensaje trata de un tema completamente nuevo que NO está en la lista, genera un tópico nuevo (2-4 palabras, minúsculas).\\n\\n**Datos:**\\n- [Tópicos Existentes]: {{ $json.existing_topics }}\\n- [Mensaje Nuevo]: <<< {{ $json.text }} >>>\\n\\nResponde SOLAMENTE con el tópico (sin comillas ni puntuación).\"\n    }\n  ],\n  \"temperature\": 0\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2544,
+        528
+      ],
+      "id": "341079ab-38a8-436c-8e61-89c2c22286c3",
+      "name": "Groq: Topic Label"
+    },
+    {
+      "parameters": {
+        "jsCode": "// [OPTIMIZADO] \n// 1. Recuperamos los datos originales REFERENCIANDO al nodo Dedup\nconst orig = $('Dedup & Clean').first().json;\n\n// 2. Recuperamos la respuesta del LLM de la entrada actual\nconst llm  = items[0].json;\n\n// Procesar respuesta\nconst responseText = String(llm.choices[0]?.message?.content || '').trim().toLowerCase();\nconst topic = responseText.replace(/[^a-z0-9áéíóúñ\\s]/gi,'').slice(0,60) || 'otros';\n\nconst out = {\n  id: orig.id,\n  space: orig.space,\n  text: orig.text,\n  user_email: orig.user_email,\n  created_at: orig.created_at,\n  channel: orig.channel,\n  thread: orig.thread,\n  topic\n};\n\nreturn [{ json: out }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2320,
+        528
+      ],
+      "id": "8b590fef-b9dc-46c9-b302-61f39979d95c",
+      "name": "Recombine (set topic)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO voc_messages (msg_id, space, user_email, text, topic, priority, score, created_at)\nVALUES (\n  '{{$json.id}}',\n  '{{$json.space}}',\n  '{{$json.user_email}}',\n  '{{$json.text}}',\n  '{{$json.topic}}',\n  '{{$json.priority}}',\n  {{$json.score}},\n  '{{$json.created_at}}'::timestamptz\n)\nON CONFLICT (msg_id) DO UPDATE SET\n  topic = EXCLUDED.topic,\n  priority = EXCLUDED.priority,\n  score = EXCLUDED.score;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -880,
+        512
+      ],
+      "id": "eccfee83-d302-4532-96f8-c51872bc191b",
+      "name": "DB: Insert Message",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const it = $json;\nconst topic = (it.topic || '').toLowerCase();\n\nconst pickArea = (t) => {\n  if (/(pago|checkout|tarjeta|mercadopago|cobro|mp)/.test(t)) return 'Pagos';\n  if (/(login|acceso|registro|password|contraseña|clave)/.test(t)) return 'Acceso';\n  if (/(cat[aá]logo|producto|stock|precio)/.test(t)) return 'Catalogo';\n  if (/(env[ií]o|entrega|log[íi]stica|paqueter[ií]a)/.test(t)) return 'Logistica';\n  if (/(app|android|ios|m[oó]vil)/.test(t)) return 'AppMovil';\n  if (/(facturaci[oó]n|factura|comprobante|impuesto)/.test(t)) return 'Facturacion';\n  if (/(ca[ií]do|latencia|servidor|infra|k8s|kubernetes)/.test(t)) return 'Infra';\n  return 'Soporte';\n};\n\nconst area = pickArea(topic);\nconst map = {\n  \"Pagos\": {\n    \"topicId\": 11,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  },\n  \"Acceso\": {\n    \"topicId\": 12,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  },\n  \"Catalogo\": {\n    \"topicId\": 13,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  },\n  \"Logistica\": {\n    \"topicId\": 14,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  },\n  \"Infra\": {\n    \"topicId\": 15,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  },\n  \"Soporte\": {\n    \"topicId\": 16,\n    \"chat_webhook\": \"REPLACE_WITH_WEBHOOK\"\n  }\n}\nconst route = map[area] || map['Soporte'];\n\nreturn [{ json: { ...it, area, topicId: route.topicId, chat_webhook: route.webhook } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        368
+      ],
+      "id": "eb3a9e9a-8e92-4c78-a4f0-a2f8a2c9cee3",
+      "name": "Area & Routing Map"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO voc_topics (topic, label, last_seen, priority)\nVALUES ('{{$json.topic}}','{{$json.topic}}',now(),'{{$json.priority}}')\nON CONFLICT (topic) DO UPDATE SET last_seen=EXCLUDED.last_seen, priority=EXCLUDED.priority;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -880,
+        208
+      ],
+      "id": "90e4857b-3d8c-449f-9931-bde83f31851b",
+      "name": "DB: Upsert Topic",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://osticket/api/tickets.json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_OSTICKET_API_KEY_HERE"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -208,
+        256
+      ],
+      "id": "d1416275-d67f-4d29-8d2e-746b12de53cf",
+      "name": "osTicket: Create ticket"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Accedemos al JSON del ítem de entrada\nconst input = $json;\n\n// 1. Construimos el string del mensaje principal\nconst messageBody = `Tema: ${input.topic}\nBuenos dias estimados.\nProblema: ${input.text}\n\n---\nArea: ${input.area}\nCanal: ${input.channel}\nSpace: ${input.space}\nUsuario: ${input.user_email}`;\n\n// 2. Creamos el objeto JSON final para osTicket\nconst ticketData = {\n  name: \"VoC Bot\", // Nombre del remitente (bot)\n  email: input.user_email, // Email del cliente\n  subject: `${input.topic}`,\n  message: messageBody,\n  ip: \"127.0.0.1\", // IP estática como solicitaste\n  topicId: input.topicId // Mapeo directo del topicId\n};\n\n// 3. Retornamos el nuevo JSON\nreturn [{ json: ticketData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        256
+      ],
+      "id": "cb1856e3-bab8-4c1f-9e9d-3915863b0f77",
+      "name": "Format to osTicket"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7a9f8d66-a6d1-41ca-924e-6a38f1c4a99b",
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "MUST",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "706438fd-ac9a-4bd7-83e7-4cdae54f3b93",
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "SHOULD",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -672,
+        368
+      ],
+      "id": "f8985666-1ea4-4e88-8cfc-266dbb90245f",
+      "name": "If Priority"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO voc_messages (\n  msg_id, space, user_email, text, topic, created_at, priority, score,\n  osticket_id\n)\nVALUES (\n  -- Recuperamos todo del nodo de Ruteo\n  '{{ $('Area & Routing Map').first().json.id }}',\n  '{{ $('Area & Routing Map').first().json.space }}',\n  '{{ $('Area & Routing Map').first().json.user_email }}',\n  '{{ $('Area & Routing Map').first().json.text.replace(/'/g, \"''\") }}',\n  '{{ $('Area & Routing Map').first().json.topic }}',\n  '{{ $('Area & Routing Map').first().json.created_at }}'::timestamptz,\n  '{{ $('Area & Routing Map').first().json.priority }}',\n   {{ $('Area & Routing Map').first().json.score }},\n\n   -- ID del Ticket (viene de la entrada actual)\n   {{ $json.data }}::int\n)\nON CONFLICT (msg_id) DO UPDATE SET\n  osticket_id = EXCLUDED.osticket_id,\n  priority = EXCLUDED.priority,\n  score = EXCLUDED.score;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        256
+      ],
+      "id": "66e85275-c474-4128-aedf-c4314d3124b2",
+      "name": "DB: Upsert Ticket ID",
+      "alwaysOutputData": false,
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT topic FROM voc_topics",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2960,
+        528
+      ],
+      "id": "6c012724-f432-42a4-be86-e22cb95c4dd1",
+      "name": "DB: Get Topics",
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// [OPTIMIZADO] Leemos datos de nodos anteriores directamente\n\n// 1. Obtenemos el texto del mensaje limpio (del nodo Dedup)\nconst textToAnalyze = $('Dedup & Clean').first().json.text_clean;\n\n// 2. Obtenemos los tópicos (del input actual, que es DB: Get Topics)\n// 'items' aquí contiene todas las filas devueltas por la query\nconst topics = items\n  .map(i => i.json.topic)\n  .filter(t => t)\n  .map(t => t.toLowerCase());\n\n// 3. Eliminamos duplicados y formateamos\nconst uniqueTopics = [...new Set(topics)];\nconst topicsListString = uniqueTopics.join(', ');\n\n// 4. Retornamos todo listo para el Prompt\nreturn [{\n  json: {\n    text: textToAnalyze,\n    existing_topics: topicsListString\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2768,
+        528
+      ],
+      "id": "5e25916c-256e-4a88-8b1c-116a46a8522f",
+      "name": "Prep Topic Prompt"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT text, priority, score, solution FROM voc_messages\nWHERE topic = '{{$json.topic}}' AND solution IS NOT NULL\nLIMIT 20;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -2128,
+        528
+      ],
+      "id": "3f8fab28-7be7-433f-85db-13f25b59bbda",
+      "name": "DB: Get Solutions",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "22218f7a-0f9e-4297-b2ee-0b0da98bff7e",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "CONTINUE",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1328,
+        528
+      ],
+      "id": "29c7b5f3-c9cf-4ee5-ba2f-a700d57443ee",
+      "name": "Is SOLVED?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// [OPTIMIZADO] Fusion directa sin Merge Node previo\n// 1. Encontrar el nuevo mensaje (referenciando al nodo Recombine)\nconst newMessage = $('Recombine (set topic)').first().json;\n\n// 2. Obtener el historial (del input actual, que viene de DB: Get Solutions)\nconst historicalSolutions = items\n  .map(i => i.json)\n  .map(item => ({\n    problem: item.text,\n    priority: item.priority,\n    score: item.score,\n    solution: item.solution\n  }));\n\n// 3. Crear el JSON unificado\nconst unifiedData = {\n  new_message: newMessage,\n  historical_solutions: historicalSolutions\n};\n\nreturn [{ json: unifiedData }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1936,
+        528
+      ],
+      "id": "dea79281-7400-4b75-aaf8-7df1c0212137",
+      "name": "Msg & Historical Fusion"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Recuperamos los datos originales del mensaje (que están en el nodo de fusión)\n// Usamos .first() porque en este flujo lineal procesamos 1 a 1.\nconst originalContext = $('Msg & Historical Fusion').first().json.new_message;\n\nreturn items.map(item => {\n  try {\n    // 2. Extraemos la respuesta del LLM\n    const rawContent = item.json.choices[0].message.content;\n    const parsedContent = JSON.parse(rawContent);\n\n    // 3. Retornamos la FUSIÓN: Datos Originales + Datos Calculados por IA\n    return {\n      json: {\n        // Esparcimos (...) los datos originales (id, text, topic, email, etc.)\n        ...originalContext,\n        \n        // Agregamos/Sobrescribimos con los datos de la IA\n        decision: parsedContent.decision,\n        solution: parsedContent.solution,\n        priority: parsedContent.priority || 'COULD', // Fallback seguro\n        score: parsedContent.score || 30\n      }\n    };\n  } catch (error) {\n    // En caso de error, también devolvemos el contexto para no romper el flujo totalmente\n    return {\n      json: {\n        ...originalContext,\n        decision: \"ERROR\",\n        error_details: error.message,\n        raw_output: item.json.choices[0].message.content\n      }\n    };\n  }\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        528
+      ],
+      "id": "3915159e-4ff3-415f-87fc-47e6045f3c7c",
+      "name": "Check continue"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + 'YOUR_GROQ_API_KEY_HERE' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un asistente de soporte técnico amable y eficiente. Tu trabajo es comunicar una solución existente al usuario. NO inventes nada, solo redacta la solución provista de forma clara y empática.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": `El usuario hizo una consulta y encontramos una solución en nuestra base de conocimientos. Redacta la respuesta para el chat.\n\n**Consulta del Usuario:**\n\"${ $('Msg & Historical Fusion').first().json.new_message.text }\"\n\n**Solución Técnica Encontrada:**\n\"${ $json.solution }\"\n\n**Instrucciones:**\n1. Saluda brevemente.\n2. Explica la solución basándote estrictamente en la \"Solución Técnica\".\n3. Si la solución menciona que se derivó a producto/finanzas, infórmalo como algo positivo (\"Ya hemos elevado este tema...\").\n4. Mantén un tono servicial.\n\nRespuesta:`\n    }\n  ],\n  \"temperature\": 0.3\n}\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1088,
+        736
+      ],
+      "id": "8cac7345-c9cf-45e7-a6a0-11316b8f6893",
+      "name": "Groq: Construir Respuesta"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQAG7Kgc94/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=MVatt5WfPSs4oB3tQ9-Ay-dZFuEMglUxLyRSNSnPNbQ",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n(() => {\n  // 1. Obtenemos el nombre del hilo del nodo original\n  const threadName = $('Msg & Historical Fusion').first().json.new_message.thread;\n  \n  // 2. Preparamos el cuerpo básico\n  const body = {\n    text: $json.choices[0].message.content\n  };\n\n  // 3. SOLO agregamos el objeto thread si threadName existe y no está vacío\n  if (threadName) {\n    body.thread = { name: threadName };\n  }\n\n  return body;\n})()\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -864,
+        736
+      ],
+      "id": "be3b638a-1822-4d46-9c85-5a015d50cf0c",
+      "name": "gChat: Responder pedido"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + 'YOUR_GROQ_API_KEY_HERE' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un asistente virtual amigable, relajado y con buena onda del equipo de Producto. Tu trabajo es responder a mensajes casuales, sugerencias de diseño o feedback general que no requieren soporte técnico urgente.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": `Genera una respuesta corta y conversacional para Google Chat.\n\n**Contexto del Mensaje:**\n- Usuario: ${$json.user_email}\n- Tópico: ${$json.topic}\n- Mensaje Original: \"${$json.text}\"\n\n**Instrucciones de Respuesta (Improvisa con libertad pero mantén el profesionalismo):**\n\n1. **Si es una Sugerencia (Feedback, UI/UX, 'estaría bueno que...'):**\n   - ¡Valídalo! Diles que es una gran idea o un punto de vista interesante.\n   - Usa frases como \"Nos encanta que se involucren\", \"Me llevo esto para comentarlo con el equipo de diseño\", \"Opa, no lo habíamos pensado así\".\n   - NO prometas fechas ni implementación, solo que será escuchado.\n\n2. **Si es un Saludo o Social (Hola, gracias, chiste):**\n   - Responde con naturalidad, devuelve el saludo o el agradecimiento.\n   - Puedes usar emojis (👋, 🚀, ✨).\n\n3. **Si es una queja leve (No me gusta el color, el botón es chico):**\n   - Agradece la honestidad. El feedback negativo constructivo es valioso.\n\n**Tono:** Casual, cercano, humano. Evita sonar como un robot corporativo (\"Hemos recibido su solicitud\").\n\nRespuesta:`\n    }\n  ],\n  \"temperature\": 0.7\n}\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -208,
+        464
+      ],
+      "id": "e5f4b7de-c31f-4d3a-95ec-b9b95693a52c",
+      "name": "Groq: Generar respuesta"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO voc_messages (\n  msg_id,\n  space,\n  user_email,\n  text,\n  topic,\n  created_at,\n  priority,\n  score,\n  solution,\n  solution_at\n)\nVALUES (\n  -- Datos Originales recuperados del nodo \"Check continue\"\n  '{{ $('Check continue').first().json.id }}',\n  '{{ $('Check continue').first().json.space }}',\n  '{{ $('Check continue').first().json.user_email }}',\n  '{{ $('Check continue').first().json.text.replace(/'/g, \"''\") }}',\n  '{{ $('Check continue').first().json.topic }}',\n  '{{ $('Check continue').first().json.created_at }}',\n\n  -- Datos Calculados (Prioridad y Score) recuperados del mismo nodo\n  '{{ $('Check continue').first().json.priority }}',\n  {{ $('Check continue').first().json.score }},\n\n  -- Solución (Deflexión)\n  '{{ $('Check continue').first().json.solution.replace(/'/g, \"''\") }}',\n  now()\n)\nON CONFLICT (msg_id) DO UPDATE SET\n  solution = EXCLUDED.solution,\n  solution_at = EXCLUDED.solution_at,\n  priority = EXCLUDED.priority,\n  score = EXCLUDED.score;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -640,
+        736
+      ],
+      "id": "d0276d79-3507-403a-8da7-668dd1997c87",
+      "name": "DB: Insert Message based on Solution",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + 'YOUR_GROQ_API_KEY_HERE' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un Agente de Soporte Inteligente (Nivel 1). Tu misión es simultánea: 1) Buscar soluciones históricas y 2) Clasificar la prioridad del ticket actual.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": `Analiza el siguiente caso.\n\n**Datos de Entrada:**\n- Mensaje Actual: \"${$json.new_message.text}\"\n- Tópico: \"${$json.new_message.topic}\"\n- Historial (Contexto): ${JSON.stringify($json.historical_solutions)}\n\n**TAREA 1: Búsqueda de Solución (Deflexión)**\n- Compara el problema técnico actual con el Historial.\n- **SOLVED:** Si existe una solución aplicable (aunque sea genérica).\n- **CONTINUE:** Si es un problema nuevo o distinto.\n\n**TAREA 2: Cálculo de Prioridad (MoSCoW)**\nEvalúa la urgencia del *Mensaje Actual* (no copies la del historial ciegamente):\n- **MUST (85-100):** Caídas masivas, pérdida de dinero/datos, bloqueos críticos en producción.\n- **SHOULD (60-84):** Bloqueo de un usuario, funciones principales fallando, errores molestos.\n- **COULD (20-59):** Consultas, feedback, problemas cosméticos, entornos de prueba/dev, \"no urgente\".\n- **WONT (0-19):** Spam, saludos, fuera de scope.\n\n**Salida JSON OBLIGATORIA:**\n{\n  \"decision\": \"SOLVED\" o \"CONTINUE\",\n  \"solution\": \"Texto de la solución encontrada (o null)\",\n  \"priority\": \"MUST\" | \"SHOULD\" | \"COULD\" | \"WONT\",\n  \"score\": 0-100 (Entero)\n}`\n    }\n  ],\n  \"response_format\": {\n    \"type\": \"json_object\"\n  },\n  \"temperature\": 0\n}\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1728,
+        528
+      ],
+      "id": "d38eb363-7b4a-41f1-a085-e492433ab968",
+      "name": "Groq: Deflector de Tickets & Priorizador (MoSCoW)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        208
+      ],
+      "id": "8a7f8afc-2acd-4da9-a17a-1c7c6db76d96",
+      "name": "DBOp1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -672,
+        512
+      ],
+      "id": "9f0702c9-2c59-4bd5-8ae3-9bdc55850cff",
+      "name": "DBOp2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        736
+      ],
+      "id": "d9567086-40bd-4dc7-83fe-9b87ddfae973",
+      "name": "DBOp4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://chat.googleapis.com/v1/spaces/AAQAG7Kgc94/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=MVatt5WfPSs4oB3tQ9-Ay-dZFuEMglUxLyRSNSnPNbQ",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n(() => {\n  // 1. \"Saltamos\" hacia atrás para buscar el ID directo del nodo de creación\n  const ticketNum = $('osTicket: Create ticket').first().json.data; \n\n  // 2. Recuperamos el hilo original\n  const threadName = $('Msg & Historical Fusion').first().json.new_message.thread;\n  \n  // 3. Armamos la URL\n  const url = `http://localhost:8080/scp/tickets.php?id=${ticketNum}`;\n\n  // 4. Construimos el mensaje simple y efectivo\n  const body = {\n    text: `✅ *Problema registrado*\\n\\nSe ha generado el Ticket **#${ticketNum}**.\\nPuedes acceder al detalle aquí:\\n${url}`\n  };\n\n  // 5. Agregamos el hilo si existe para mantener la conversación ordenada\n  if (threadName) {\n    body.thread = { name: threadName };\n  }\n\n  return body;\n})()\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        208,
+        256
+      ],
+      "id": "2b0f9414-c4de-4ba8-af98-9d35e8a3be7a",
+      "name": "gChat: Ticket feedback"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/spaces/AAQAG7Kgc94/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=MVatt5WfPSs4oB3tQ9-Ay-dZFuEMglUxLyRSNSnPNbQ",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n(() => {\n  // 1. Obtenemos el nombre del hilo del nodo original\n  const threadName = $('Msg & Historical Fusion').first().json.new_message.thread;\n  \n  // 2. Preparamos el cuerpo básico\n  const body = {\n    text: $json.choices[0].message.content\n  };\n\n  // 3. SOLO agregamos el objeto thread si threadName existe y no está vacío\n  if (threadName) {\n    body.thread = { name: threadName };\n  }\n\n  return body;\n})()\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        0,
+        464
+      ],
+      "id": "051523af-9805-4682-ba3e-b6b44a0b7e41",
+      "name": "gChat: Respuesta casual"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook /gchat": {
+      "main": [
+        [
+          {
+            "node": "Parse Google Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Google Chat": {
+      "main": [
+        [
+          {
+            "node": "Has Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Text?": {
+      "main": [
+        [
+          {
+            "node": "Dedup & Clean",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup & Clean": {
+      "main": [
+        [
+          {
+            "node": "DB: Get Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Topic Label": {
+      "main": [
+        [
+          {
+            "node": "Recombine (set topic)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recombine (set topic)": {
+      "main": [
+        [
+          {
+            "node": "DB: Get Solutions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Area & Routing Map": {
+      "main": [
+        [
+          {
+            "node": "DB: Insert Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "DB: Upsert Topic",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format to osTicket": {
+      "main": [
+        [
+          {
+            "node": "osTicket: Create ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Priority": {
+      "main": [
+        [
+          {
+            "node": "Format to osTicket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq: Generar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "osTicket: Create ticket": {
+      "main": [
+        [
+          {
+            "node": "DB: Upsert Ticket ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Topics": {
+      "main": [
+        [
+          {
+            "node": "Prep Topic Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Topic Prompt": {
+      "main": [
+        [
+          {
+            "node": "Groq: Topic Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Get Solutions": {
+      "main": [
+        [
+          {
+            "node": "Msg & Historical Fusion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is SOLVED?": {
+      "main": [
+        [
+          {
+            "node": "Area & Routing Map",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Groq: Construir Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Msg & Historical Fusion": {
+      "main": [
+        [
+          {
+            "node": "Groq: Deflector de Tickets & Priorizador (MoSCoW)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check continue": {
+      "main": [
+        [
+          {
+            "node": "Is SOLVED?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Construir Respuesta": {
+      "main": [
+        [
+          {
+            "node": "gChat: Responder pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gChat: Responder pedido": {
+      "main": [
+        [
+          {
+            "node": "DB: Insert Message based on Solution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Generar respuesta": {
+      "main": [
+        [
+          {
+            "node": "gChat: Respuesta casual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Deflector de Tickets & Priorizador (MoSCoW)": {
+      "main": [
+        [
+          {
+            "node": "Check continue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Upsert Topic": {
+      "main": [
+        [
+          {
+            "node": "DBOp1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Insert Message": {
+      "main": [
+        [
+          {
+            "node": "DBOp2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Upsert Ticket ID": {
+      "main": [
+        [
+          {
+            "node": "gChat: Ticket feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DB: Insert Message based on Solution": {
+      "main": [
+        [
+          {
+            "node": "DBOp4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gChat: Ticket feedback": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "938873c6-acb0-46b5-9d97-e946f1ad5429",
+  "meta": {
+    "instanceId": "b08bad79bd5cb251a07649d0757061cc6ffb55dfb35041fe1312ae1bcc134cb5"
+  },
+  "id": "umxgnlL70iRmoynG",
+  "tags": []
+}

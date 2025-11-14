@@ -1,0 +1,233 @@
+{
+  "name": "VoC Solution Harvester",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "98c3d9c5-a9c5-4fb7-a7d2-9f967d517b5c",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    t.ticket_id,\n    t.number,\n    t.closed\nFROM ost_ticket t\nJOIN ost_ticket_status s ON t.status_id = s.id\nWHERE \n    s.state = 'closed'\n    AND t.closed >= DATE_SUB(NOW(), INTERVAL 70 MINUTE); \n-- Traemos tickets cerrados en la ultima hora (con 10min de buffer)",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        224,
+        0
+      ],
+      "id": "565d6f67-46b5-43b6-af00-7fa6ba153703",
+      "name": "MySQL: Get Recent Closed Tickets",
+      "credentials": {
+        "mySql": {
+          "id": "M66XpQmHlC83HWgY",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filtramos si no hay tickets para no ejecutar el resto en vano\nreturn items.length > 0 ? items : [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "2a1e7107-c73d-4a19-ba52-b8ca8f137756",
+      "name": "Check if empty"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n    te.body as solution_text,\n    {{ $json.number }} as ticket_id\nFROM ost_thread_entry te\nJOIN ost_thread th ON te.thread_id = th.id\nWHERE \n    th.object_id = {{ $json.ticket_id }}\n    AND th.object_type = 'T' -- T = Ticket\n    AND te.type = 'R'        -- R = Response (Respuesta de Agente)\nORDER BY te.created DESC\nLIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.4,
+      "position": [
+        880,
+        0
+      ],
+      "id": "1b83b8b4-7fc1-410c-8339-743ab14c2d11",
+      "name": "MySQL: Get Last Agent Reply",
+      "credentials": {
+        "mySql": {
+          "id": "M66XpQmHlC83HWgY",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + 'YOUR_GROQ_API_KEY_HERE' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"model\": \"llama-3.1-8b-instant\",\n  \"stream\": false,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un experto en gestión de conocimiento. Tu tarea es extraer la solución técnica de una respuesta de soporte.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": `Resume la siguiente respuesta de un agente de soporte en una única frase técnica clara (la Solución). Elimina saludos, firmas y texto de relleno.\n\n**Respuesta Original:**\n${ $json.solution_text }\n\n**Salida (Solo la solución):**`\n    }\n  ],\n  \"temperature\": 0.1\n}\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "5804d5ec-0e4a-4811-8c2a-56a3813bf166",
+      "name": "Groq: Summarize Solution"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE voc_messages\nSET \n    solution = '{{ $json.choices[0].message.content.replace(/'/g, \"''\") }}',\n    solution_at = now()\nWHERE \n    osticket_id = {{ $('MySQL: Get Last Agent Reply').first().json.ticket_id }};;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1328,
+        0
+      ],
+      "id": "23615d61-d244-4556-900e-1c60c27b0ff5",
+      "name": "Postgres: Update Solution",
+      "credentials": {
+        "postgres": {
+          "id": "c0KWWJ64UFxmQxl5",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        640,
+        0
+      ],
+      "id": "590b4a92-99bf-4fcb-b7d2-acd53e4b4c15",
+      "name": "SplitInBatches"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "MySQL: Get Recent Closed Tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MySQL: Get Recent Closed Tickets": {
+      "main": [
+        [
+          {
+            "node": "Check if empty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if empty": {
+      "main": [
+        [
+          {
+            "node": "SplitInBatches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SplitInBatches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "MySQL: Get Last Agent Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MySQL: Get Last Agent Reply": {
+      "main": [
+        [
+          {
+            "node": "Groq: Summarize Solution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq: Summarize Solution": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Update Solution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Update Solution": {
+      "main": [
+        [
+          {
+            "node": "SplitInBatches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1b292268-19df-478f-a8e4-e3be88df875b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b08bad79bd5cb251a07649d0757061cc6ffb55dfb35041fe1312ae1bcc134cb5"
+  },
+  "id": "KO7rkPPQNAupEcN1",
+  "tags": []
+}

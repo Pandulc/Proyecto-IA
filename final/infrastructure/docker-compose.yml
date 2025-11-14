@@ -1,0 +1,107 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "${N8N_PORT}:5678"
+    environment:
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      app_net:
+        ipv4_address: 172.23.0.6
+
+  postgres:
+    image: postgres:15
+    container_name: n8n_postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - app_net
+
+  osticket:
+    image: harbor.psi.unc.edu.ar/servicios/kubernetes/migraciones/osticket-prueba/osticket-docker/dev
+    container_name: osticket_app
+    ports:
+      - "${OSTICKET_PORT}:80"
+    environment:
+      # Asegúrate de que las variables de entorno coincidan
+      # con las que tu imagen personalizada espera.
+      # Estas son las que usamos antes:
+      - MYSQL_HOST=db_osticket
+      - MYSQL_DATABASE=${OSTICKET_DB_NAME}
+      - MYSQL_USER=${OSTICKET_DB_USER}
+      - MYSQL_PASSWORD=${OSTICKET_DB_PASSWORD}
+      - MYSQL_PORT=3306
+    volumes:
+      - osticket_config_data:/var/www/html/include/
+      # - osticket_plugins_data:/var/www/html/include/plugins/
+    depends_on:
+      - db_osticket
+    restart: unless-stopped
+    networks:
+      - app_net
+
+  db_osticket:
+    image: mariadb:10.11
+    container_name: osticket_db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${OSTICKET_DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${OSTICKET_DB_NAME}
+      - MYSQL_USER=${OSTICKET_DB_USER}
+      - MYSQL_PASSWORD=${OSTICKET_DB_PASSWORD}
+    volumes:
+      - osticket_db_data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - app_net
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: ngrok
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: "http n8n:5678"
+    ports:
+      - "4040:4040"
+    networks:
+      - app_net
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
+  postgres_data:
+  ollama_data:
+  osticket_db_data:
+  osticket_config_data:
+
+networks:
+  app_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24

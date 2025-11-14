@@ -1,0 +1,19 @@
+{
+  "type": "MESSAGE",
+  "message": {
+    "name": "spaces/AAA/messages/MSG987654",
+    "text": "No puedo pagar con MercadoPago, se queda cargando en el checkout.",
+    "sender": {
+      "email": "cliente@example.com",
+      "displayName": "Cliente Prueba"
+    },
+    "createTime": "2025-10-28T18:35:00.000Z",
+    "thread": {
+      "name": "spaces/AAA/threads/BBB111"
+    },
+    "space": {
+      "name": "spaces/AAA",
+      "spaceType": "SPACE"
+    }
+  }
+}
