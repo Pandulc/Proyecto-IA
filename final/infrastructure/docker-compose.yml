@@ -49,9 +49,6 @@ services:
     ports:
       - "${OSTICKET_PORT}:80"
     environment:
-      # Asegúrate de que las variables de entorno coincidan
-      # con las que tu imagen personalizada espera.
-      # Estas son las que usamos antes:
       - MYSQL_HOST=db_osticket
       - MYSQL_DATABASE=${OSTICKET_DB_NAME}
       - MYSQL_USER=${OSTICKET_DB_USER}
@@ -59,7 +56,6 @@ services:
       - MYSQL_PORT=3306
     volumes:
       - osticket_config_data:/var/www/html/include/
-      # - osticket_plugins_data:/var/www/html/include/plugins/
     depends_on:
       - db_osticket
     restart: unless-stopped
